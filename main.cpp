@@ -55,16 +55,16 @@ Mat energyMatrix(const Mat &input, float (*norm)(float, float, float))
     split(input, channels);
 
     vector<Mat> gradients;
-    for (const Mat& channel : channels)
+    for (const Mat &channel: channels)
         gradients.push_back(channelGradient(channel));
 
     Mat energy(input.rows, input.cols, CV_32FC1);
     for (int row = 0; row < input.rows; ++row)
         for (int col = 0; col < input.cols; ++col)
             energy.at<float>(row, col) = norm(
-                channels[0].at<float>(row, col),
-                channels[1].at<float>(row, col),
-                channels[2].at<float>(row, col)
+                    channels[0].at<float>(row, col),
+                    channels[1].at<float>(row, col),
+                    channels[2].at<float>(row, col)
             );
 
     return energy;
@@ -75,15 +75,15 @@ Mat cumulativeEnergy(const Mat &input)
     Mat energy = energyMatrix(input, euclideanNorm);
     Mat minCumulativeEnergy(energy.rows, energy.cols, CV_32FC1);
 
-    for (int col = 0 ; col < minCumulativeEnergy.cols ; ++col)
+    for (int col = 0; col < minCumulativeEnergy.cols; ++col)
         minCumulativeEnergy.at<float>(0, col) = energy.at<float>(0, col);
 
-    for (int row = 1 ; row < minCumulativeEnergy.rows ; ++row)
+    for (int row = 1; row < minCumulativeEnergy.rows; ++row)
     {
-        for (int col = 0 ; col < minCumulativeEnergy.cols ; ++col)
+        for (int col = 0; col < minCumulativeEnergy.cols; ++col)
         {
             float minEnergy = INFINITY;
-            for (int offset = -1 ; offset <= 1 ; ++offset)
+            for (int offset = -1; offset <= 1; ++offset)
             {
                 if (col + offset < 0 || col + offset >= minCumulativeEnergy.cols)
                     continue;
@@ -98,27 +98,64 @@ Mat cumulativeEnergy(const Mat &input)
     return minCumulativeEnergy;
 }
 
-/**
- * WIP
- */
-Mat seamCarve(const Mat &input, int newWidth, int newHeight)
+vector<int> backtrack(const Mat &input)
 {
+    vector<int> seam;
     Mat minCumulativeEnergy = cumulativeEnergy(input);
 
     int startCol = 0;
-    for (int col = 1 ; col < minCumulativeEnergy.cols ; ++col)
-        if (minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, col) < minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, startCol))
+    for (int col = 1; col < minCumulativeEnergy.cols; ++col)
+        if (minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, col) <
+            minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, startCol))
             startCol = col;
 
     int currentCol = startCol;
-    for (int row = minCumulativeEnergy.rows - 1 ; row > 0 ; --row)
+    for (int row = minCumulativeEnergy.rows - 1; row > 0; --row)
     {
-        cout << currentCol << endl;
+        seam.push_back(currentCol);
+        int minCol = currentCol;
+        for (int offset = -1; offset <= 1; ++offset)
+        {
+            if (currentCol + offset < 0 || currentCol + offset >= minCumulativeEnergy.cols)
+                continue;
+            if (minCumulativeEnergy.at<float>(row, currentCol + offset) < minCumulativeEnergy.at<float>(row, minCol))
+                minCol = currentCol + offset;
+        }
+        currentCol = minCol;
+    }
+    seam.push_back(currentCol);
+    return seam;
+}
 
+Mat resize(const Mat3f &input, const vector<int> &seam)
+{
+    Mat3f output(0, input.cols - 1, CV_32FC3);
+    for (int row = 0 ; row < input.rows ; ++row)
+    {
+        Mat3f tempRowLeft(1, seam[row], CV_32FC3);
+        Mat3f tempRowRight(1, input.cols - seam[row] - 1, CV_32FC3);
+        input(Range(row, row + 1), Range(0, seam[row])).copyTo(tempRowLeft);
+        input(Range(row, row + 1), Range(seam[row] + 1, input.cols)).copyTo(tempRowRight);
+        Mat3f tempRow(1, input.cols, CV_32FC3);
+        hconcat(tempRowLeft, tempRowRight, tempRow);
+        // output.row(row) = tempRow;
+        vconcat(output, tempRow, output);
+    }
+    return output;
+}
+
+Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
+{
+    Mat3f output = input.clone();
+
+    for (int i = 0 ; i < 100 ; ++i)
+    {
+        cout << i << endl;
+        vector<int> seam = backtrack(output);
+        output = resize(output, seam);
     }
 
-    //return energyMatrix(input);
-    return input;
+    return output;
 }
 
 int main(int argc, char *argv[])
@@ -126,29 +163,29 @@ int main(int argc, char *argv[])
     ArgumentParser program("seam_carve");
 
     program.add_argument("image")
-        .help("input image path");
+            .help("input image path");
     program.add_argument("-o", "--output")
-        .help("output directory path");
+            .help("output directory path");
     program.add_argument("-w", "--width")
-        .help("output image width");
+            .help("output image width");
     program.add_argument("-H", "--height")
-        .help("output image height");
+            .help("output image height");
 
 
     try
     {
         program.parse_args(argc, argv);
 
-        auto const& inputPath = program.get<string>("image");
-        auto const& outputPath = program.get<string>("-o");
+        auto const &inputPath = program.get<string>("image");
+        auto const &outputPath = program.get<string>("-o");
 
         Mat input = imread(inputPath);
         input.convertTo(input, CV_32FC3, 1 / 256.f);
 
-        Mat output = seamCarve(input, 100, 100);
+        Mat3f output = seamCarve(input, 100, 100);
         imwrite(outputPath, output * 256);
     }
-    catch (const runtime_error& err)
+    catch (const runtime_error &err)
     {
         cerr << err.what() << std::endl;
         cerr << program;
