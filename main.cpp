@@ -74,20 +74,20 @@ void exportAllEnergyPath(const Mat &input, float (*norm)(float, float, float))
 {
     Mat output(input.rows, input.cols, CV_32FC1);
     Mat energy = energyMatrix(input, norm);
-    for (int startCol = 0; startCol < input.cols; ++startCol)
+    for (int startCol = 0; startCol < output.cols; ++startCol)
     {
         int col = startCol;
-        for (int row = 0; row < input.rows; ++row)
+        for (int row = 0; row < output.rows; ++row)
         {
             ++output.at<float>(row, col);
             float minEnergy = INFINITY;
             int minOffset = 0;
             for (int offset = -1; offset <= 1; ++offset)
             {
-                if (col + offset < 0 || col + offset >= energy.cols)
+                if (col + offset < 0 || col + offset >= output.cols)
                     continue;
 
-                if (minEnergy < energy.at<float>(row - 1, col + offset))
+                if (energy.at<float>(row - 1, col + offset) < minEnergy)
                 {
                     minEnergy = energy.at<float>(row - 1, col + offset);
                     minOffset = offset;
@@ -99,12 +99,18 @@ void exportAllEnergyPath(const Mat &input, float (*norm)(float, float, float))
     }
 
     float maxi = 0;
-    for (int col = 0; col < input.cols; ++col)
+    for (int col = 0; col < output.cols; ++col)
         if (output.at<float>(output.rows - 1, col) > maxi)
             maxi = output.at<float>(output.rows - 1, col);
 
-    output /= maxi;
-    imwrite("../out/energyPaths.png", output * 256);
+    output += 1.f;
+
+    for (int col = 0; col < output.cols; ++col)
+        for (int row = 0; row < output.rows; ++row)
+            output.at<float>(row, col) = log(output.at<float>(row, col));
+
+    output /= log(maxi + 1.f);
+    imwrite("../out/energyPaths.png", output * 255.f);
 }
 
 Mat cumulativeEnergy(const Mat &input)
