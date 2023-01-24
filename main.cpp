@@ -70,10 +70,12 @@ Mat energyMatrix(const Mat &input, float (*norm)(float, float, float))
     return energy;
 }
 
-void exportAllEnergyPath(const Mat &input, float (*norm)(float, float, float))
+/**
+ * Returns the matrix showing energy paths from all starting points
+ */
+Mat energyPaths(const Mat &energy, float (*norm)(float, float, float))
 {
-    Mat output(input.rows, input.cols, CV_32FC1);
-    Mat energy = energyMatrix(input, norm);
+    Mat output(energy.rows, energy.cols, CV_32FC1);
     for (int startCol = 0; startCol < output.cols; ++startCol)
     {
         int col = startCol;
@@ -110,12 +112,15 @@ void exportAllEnergyPath(const Mat &input, float (*norm)(float, float, float))
             output.at<float>(row, col) = log(output.at<float>(row, col));
 
     output /= log(maxi + 1.f);
-    imwrite("../out/energyPaths.png", output * 255.f);
+
+    return output;
 }
 
-Mat cumulativeEnergy(const Mat &input)
+/**
+ * Returns the cumulative energy matrix M from the energy matrix (e.g. gradient)
+ */
+Mat cumulativeEnergy(const Mat &energy)
 {
-    Mat energy = energyMatrix(input, euclideanNorm);
     Mat minCumulativeEnergy(energy.rows, energy.cols, CV_32FC1);
 
     for (int col = 0; col < minCumulativeEnergy.cols; ++col)
@@ -141,10 +146,12 @@ Mat cumulativeEnergy(const Mat &input)
     return minCumulativeEnergy;
 }
 
-vector<int> backtrack(const Mat &input)
+/**
+ * Returns a seam from the cumulative energy matrix
+ */
+vector<int> backtrack(const Mat &minCumulativeEnergy)
 {
     vector<int> seam;
-    Mat minCumulativeEnergy = cumulativeEnergy(input);
 
     int startCol = 0;
     for (int col = 1; col < minCumulativeEnergy.cols; ++col)
@@ -170,40 +177,32 @@ vector<int> backtrack(const Mat &input)
     return seam;
 }
 
+/**
+ * Removes a seam from the image by shifting the pixels to the left
+ */
 Mat resize(const Mat3f &input, const vector<int> &seam)
 {
-    Mat3f output(input.rows, input.cols - 1, CV_32FC3);
-    for (int row = 0; row < input.rows; ++row)
-    {
-        int found = 0;
-        int seamCol = seam[row];
-        for (int col = 0; col < input.cols; ++col) {
-            if (col == seamCol)
-                found = 1;
-            else
-                output.at<Vec3f>(row, col - found) = input.at<Vec3f>(row, col);
-        }
-    }
-    return output;
-}
-
-void exportSeam(const Mat3f &input, vector<int> seam)
-{
     Mat3f output = input.clone();
-    for (int i = 0 ; i < seam.size() ; ++i)
-        output.at<Vec3f>(i, seam[i]) = Vec3f(0, 0, 1);
-    imwrite("../out/seam.png", output * 256);
+    for (int row = 0; row < input.rows; ++row)
+        for (int col = seam[row]; col < input.cols - 1; ++col)
+            output.at<Vec3f>(row, col) = input.at<Vec3f>(row, col + 1);
+    return output(Rect(0, 0, input.cols - 1, input.rows));
 }
 
 Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
 {
     Mat3f output = input.clone();
 
-    for (int i = 0; i < 250; ++i)
+    int dw = 250; // TODO use newWidth instead
+
+    for (int i = 0; i < dw; ++i)
     {
-        cout << i << endl;
-        vector<int> seam = backtrack(output);
-        //exportSeam(output, seam);
+        cout << i << "/" << dw << "\t\r";
+        cout << flush;
+
+        Mat energy = energyMatrix(input, euclideanNorm);
+        Mat minCumulativeEnergy = cumulativeEnergy(energy);
+        vector<int> seam = backtrack(minCumulativeEnergy);
         output = resize(output, seam);
     }
 
@@ -222,7 +221,10 @@ int main(int argc, char *argv[])
             .help("output image width");
     program.add_argument("-H", "--height")
             .help("output image height");
-
+    program.add_argument("--energy-paths")
+            .help("export energy paths from the input image")
+            .default_value(false)
+            .implicit_value(true);
 
     try
     {
@@ -234,10 +236,13 @@ int main(int argc, char *argv[])
         Mat input = imread(inputPath);
         input.convertTo(input, CV_32FC3, 1 / 256.f);
 
-        exportAllEnergyPath(input, euclideanNorm);
+        Mat3f output;
+        if (program.get<bool>("--energy-paths"))
+            output = energyPaths(input, euclideanNorm);
+        else
+            output = seamCarve(input, 100, 100);
 
-        // Mat3f output = seamCarve(input, 100, 100);
-        // imwrite(outputPath, output * 256);
+        imwrite(outputPath, output * 256);
     }
     catch (const runtime_error &err)
     {
