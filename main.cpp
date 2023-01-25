@@ -165,12 +165,13 @@ Seam backtrackWithStarts(const Mat &minCumulativeEnergy, const vector<int> &seam
 /**
  * Removes a seam from the image by shifting the pixels to the left
  */
-Mat resize(const Mat3f &input, const Seam &seam)
+template<typename T>
+Mat resize(const Mat &input, const Seam &seam)
 {
-    Mat3f output = input.clone();
+    Mat output = input.clone();
     for (int row = 0; row < output.rows; ++row)
         for (int col = seam.cols[row]; col < output.cols - 1; ++col)
-            output.at<Vec3f>(row, col) = output.at<Vec3f>(row, col + 1);
+            output.at<T>(row, col) = output.at<T>(row, col + 1);
     return output(Rect(0, 0, output.cols - 1, output.rows));
 }
 
@@ -187,24 +188,45 @@ bool seamIntersectAnySeams(const Seam &seam, const vector<Seam> &others)
                 return seam.cols[seam.cols.size() - 1] == other.cols[seam.cols.size() - 1];
             }
     );
-    /*
-    return any_of(
-            others.begin(),
-            others.end(),
-            [&seam](const Seam &other)
-            {
-                return !(seam.col_min > other.col_max || seam.col_max < other.col_min);
-            }
-    );
-    */
 }
 
-Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
+Mat1i generateIndexMatrix(const Mat &input)
+{
+    Mat1i output(input.rows, input.cols);
+    for (int row = 0; row < input.rows; ++row)
+        for (int col = 0; col < input.cols; ++col)
+            output.at<int>(row, col) = col;
+    return output;
+}
+
+Mat3f getImageWithSeams(const Mat3f &input, const Mat1i &index)
+{
+    Mat3f output(input.rows, input.cols);
+    for (int row = 0; row < output.rows; ++row)
+        for (int col = 0; col < output.cols; ++col)
+            output.at<Vec3f>(row, col) = Vec3f(0., 0., 1.);
+
+    for (int row = 0; row < output.rows; ++row)
+    {
+        for (int col = 0; col < index.cols; ++col)
+        {
+            int newCol = index.at<int>(row, col);
+            output.at<Vec3f>(row, newCol) = input.at<Vec3f>(row, newCol);
+        }
+    }
+
+    return output;
+}
+
+Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeams)
 {
     Mat3f output = input.clone();
+    Mat1i index;
+    if (exportSeams)
+        index = generateIndexMatrix(input);
 
     int concurrentSeams = 10;
-    int dw = 1000; // TODO use newWidth instead
+    int dw = 500; // TODO use newWidth instead
 
     Mat minCumulativeEnergy;
     vector<Seam> seams;
@@ -216,11 +238,15 @@ Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
         cout << flush;
 
         // Recalculate energy matrices and resize
-        if (i % concurrentSeams == 0 || (int) seamStarts.size() >= output.cols / 10)
+        if (i % concurrentSeams == 0 || (int) seamStarts.size() >= output.cols / 5)
         {
             cerr << seams.size() << endl;
             for (const Seam &seam: seams)
-                output = resize(output, seam);
+            {
+                output = resize<Vec3f>(output, seam);
+                if (exportSeams)
+                    index = resize<int>(index, seam);
+            }
             seamStarts.clear();
             seams.clear();
 
@@ -233,12 +259,12 @@ Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
         {
             seam = backtrackWithStarts(minCumulativeEnergy, seamStarts);
             seamStarts.push_back(seam.cols[0]);
-        } while (seamIntersectAnySeams(seam, seams) && (int) seamStarts.size() < output.cols / 10);
+        } while (seamIntersectAnySeams(seam, seams) && (int) seamStarts.size() < output.cols / 5);
 
         seams.push_back(seam);
     }
 
-    return output;
+    return exportSeams ? getImageWithSeams(input, index) : output;
 }
 
 int main(int argc, char *argv[])
@@ -257,6 +283,10 @@ int main(int argc, char *argv[])
             .help("export energy paths from the input image")
             .default_value(false)
             .implicit_value(true);
+    program.add_argument("--export-seams")
+            .help("export the input image with the seams")
+            .default_value(false)
+            .implicit_value(true);
 
     try
     {
@@ -272,7 +302,7 @@ int main(int argc, char *argv[])
         if (program.get<bool>("--energy-paths"))
             output = energyPaths(input);
         else
-            output = seamCarve(input, 100, 100);
+            output = seamCarve(input, 100, 100, program.get<bool>("--export-seams"));
 
         imwrite(outputPath, output * 256);
     }
