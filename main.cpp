@@ -1,23 +1,10 @@
 #include <iostream>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <argparse/argparse.hpp>
 
 #include "main.hpp"
 
 using namespace cv;
 using namespace std;
 using namespace argparse;
-
-struct Seam
-{
-    vector<int> cols;
-    int col_min{};
-    int col_max{};
-};
-
 
 Mat differentialFilterX(const Mat &input, float delta = 0.f)
 {
@@ -57,7 +44,7 @@ float euclideanNorm(float a, float b, float c)
 /**
  * Returns the image's energy matrix (gradient)
  */
-Mat energyMatrix(const Mat &input, const function<float(float, float, float)>& norm)
+Mat energyMatrix(const Mat &input, const function<float(float, float, float)> &norm)
 {
     vector<Mat> channels;
     split(input, channels);
@@ -85,28 +72,12 @@ Mat energyPaths(const Mat &input)
 {
     Mat output(input.rows, input.cols, CV_32FC1);
     Mat energy = energyMatrix(input, euclideanNorm);
+    Mat minCumulativeEnergy = cumulativeEnergy(energy);
     for (int startCol = 0; startCol < output.cols; ++startCol)
     {
-        int col = startCol;
+        Seam seam = backtrack(minCumulativeEnergy, startCol);
         for (int row = 0; row < output.rows; ++row)
-        {
-            ++output.at<float>(row, col);
-            float minEnergy = INFINITY;
-            int minOffset = 0;
-            for (int offset = -1; offset <= 1; ++offset)
-            {
-                if (col + offset < 0 || col + offset >= output.cols)
-                    continue;
-
-                if (energy.at<float>(row - 1, col + offset) < minEnergy)
-                {
-                    minEnergy = energy.at<float>(row - 1, col + offset);
-                    minOffset = offset;
-                }
-            }
-            col += minOffset;
-        }
-        ++output.at<float>(output.rows - 1, col);
+            ++output.at<float>(row, seam.cols[row]);
     }
 
     float maxi = 0;
@@ -125,9 +96,6 @@ Mat energyPaths(const Mat &input)
     return output;
 }
 
-/**
- * Returns the cumulative energy matrix M from the energy matrix (e.g. gradient)
- */
 Mat cumulativeEnergy(const Mat &energy)
 {
     Mat minCumulativeEnergy(energy.rows, energy.cols, CV_32FC1);
@@ -155,19 +123,9 @@ Mat cumulativeEnergy(const Mat &energy)
     return minCumulativeEnergy;
 }
 
-/**
- * Returns a seam from the cumulative energy matrix
- */
-Seam backtrack(const Mat &minCumulativeEnergy, const vector<int> &seamStarts)
+Seam backtrack(const Mat &minCumulativeEnergy, int startCol)
 {
     vector<int> seamCols;
-
-    int startCol = 0;
-    for (int col = 1; col < minCumulativeEnergy.cols; ++col)
-        if (minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, col) <
-            minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, startCol))
-            if (count(seamStarts.begin(), seamStarts.end(), col) == 0) //TODO: Remplacer le count()
-                startCol = col;
 
     int currentCol = startCol;
     for (int row = minCumulativeEnergy.rows - 1; row > 0; --row)
@@ -189,6 +147,19 @@ Seam backtrack(const Mat &minCumulativeEnergy, const vector<int> &seamStarts)
             *min_element(seamCols.begin(), seamCols.end()),
             *max_element(seamCols.begin(), seamCols.end())
     };
+}
+
+Seam backtrackWithStarts(const Mat &minCumulativeEnergy, const vector<int> &seamStarts)
+{
+    int startCol = 0;
+    for (int col = 1; col < minCumulativeEnergy.cols; ++col)
+        if (minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, col) <
+            minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, startCol))
+            if (none_of(seamStarts.begin(), seamStarts.end(), [col](const int &col_)
+            { return col == col_; }))
+                startCol = col;
+
+    return backtrack(minCumulativeEnergy, startCol);
 }
 
 /**
@@ -248,7 +219,7 @@ Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
         if (i % concurrentSeams == 0 || (int) seamStarts.size() >= output.cols / 10)
         {
             cerr << seams.size() << endl;
-            for (const Seam& seam: seams)
+            for (const Seam &seam: seams)
                 output = resize(output, seam);
             seamStarts.clear();
             seams.clear();
@@ -260,7 +231,7 @@ Mat seamCarve(const Mat3f &input, int newWidth, int newHeight)
         Seam seam;
         do
         {
-            seam = backtrack(minCumulativeEnergy, seamStarts);
+            seam = backtrackWithStarts(minCumulativeEnergy, seamStarts);
             seamStarts.push_back(seam.cols[0]);
         } while (seamIntersectAnySeams(seam, seams) && (int) seamStarts.size() < output.cols / 10);
 
