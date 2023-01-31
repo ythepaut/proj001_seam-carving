@@ -3,31 +3,31 @@
 
 #include "main.hpp"
 
-using namespace cv;
-using namespace std;
-using namespace argparse;
+using std::cout;
+using std::cerr;
+using std::endl;
 
-Mat differentialFilterX(const Mat &input, float delta = 0.f)
+Mat1f differentialFilterX(const Mat1f &input, float delta = 0.f)
 {
-    Mat output;
-    Mat kernel = (Mat_<float>(3, 3) << 1 / 4., 0, -1 / 4., 2 / 4., 0, -2 / 4., 1 / 4., 0, -1 / 4.);
-    filter2D(input, output, -1, kernel, Point(-1, -1), delta, BORDER_DEFAULT);
+    Mat1f output;
+    Mat1f kernel = (Mat1f(3, 3) << 1 / 4., 0, -1 / 4., 2 / 4., 0, -2 / 4., 1 / 4., 0, -1 / 4.);
+    filter2D(input, output, -1, kernel, cv::Point(-1, -1), delta);
     return output;
 }
 
-Mat differentialFilterY(const Mat &input, float delta = 0.f)
+Mat1f differentialFilterY(const Mat1f &input, float delta = 0.f)
 {
-    Mat output;
-    Mat kernel = (Mat_<float>(3, 3) << -1 / 4., -1 / 2., -1 / 4., 0, 0, 0, 1 / 4., 1 / 2., 1 / 4.);
-    filter2D(input, output, -1, kernel, Point(-1, -1), delta, BORDER_DEFAULT);
+    Mat1f output;
+    Mat1f kernel = (Mat1f(3, 3) << -1 / 4., -1 / 2., -1 / 4., 0, 0, 0, 1 / 4., 1 / 2., 1 / 4.);
+    filter2D(input, output, -1, kernel, cv::Point(-1, -1), delta);
     return output;
 }
 
-Mat channelGradient(const Mat &input)
+Mat1f channelGradient(const Mat1f &input)
 {
-    Mat output(input.rows, input.cols, CV_32FC1);
-    Mat dx = differentialFilterX(input);
-    Mat dy = differentialFilterY(input);
+    Mat1f output(input.rows, input.cols);
+    Mat1f dx = differentialFilterX(input);
+    Mat1f dy = differentialFilterY(input);
     for (int row = 0; row < input.rows; ++row)
         for (int col = 0; col < input.cols; ++col)
             output.at<float>(row, col) = (
@@ -39,22 +39,23 @@ Mat channelGradient(const Mat &input)
 
 float euclideanNorm(float a, float b, float c)
 {
-    return sqrt(a * a + b * b + c * c);
+    return std::sqrt(a * a + b * b + c * c);
 }
 
-Mat energyMatrix(const Mat &input, float (*norm)(float, float, float) = euclideanNorm)
+Mat1f energyMatrix(const Mat3f &input, float (*norm)(float, float, float) = euclideanNorm)
 {
     // Splits the channels for the gradient computation
-    vector<Mat> channels;
+    vector<Mat1f> channels(3);
     split(input, channels);
 
     // Computes and stores the gradient for each channel
-    vector<Mat> gradients;
-    for (const Mat &channel: channels)
+    vector<Mat1f> gradients;
+    for (const Mat1f &channel: channels)
         gradients.push_back(channelGradient(channel));
 
     // Computes the energy matrix from the norm
-    Mat energy(input.rows, input.cols, CV_32FC1);
+    Mat1f energy(input.rows, input.cols);
+    energy.at<float>(0, 0) = 1.0;
     for (int row = 0; row < input.rows; ++row)
         for (int col = 0; col < input.cols; ++col)
             energy.at<float>(row, col) = norm(
@@ -66,10 +67,10 @@ Mat energyMatrix(const Mat &input, float (*norm)(float, float, float) = euclidea
     return energy;
 }
 
-Mat energyPaths(const Mat3f &input)
+Mat3f energyPaths(const Mat3f &input)
 {
-    Mat output(input.rows, input.cols, CV_32FC1);
-    Mat energy = energyMatrix(input);
+    Mat1f output(input.rows, input.cols, CV_32FC1);
+    Mat1f energy = energyMatrix(input);
     auto [cumulativeEnergy, startColumns] = getCumulativeEnergy(energy);
     for (int startCol = 0; startCol < output.cols; ++startCol)
     {
@@ -87,10 +88,11 @@ Mat energyPaths(const Mat3f &input)
 
     for (int col = 0; col < output.cols; ++col)
         for (int row = 0; row < output.rows; ++row)
-            output.at<float>(row, col) = log(output.at<float>(row, col));
+            output.at<float>(row, col) = std::log(output.at<float>(row, col));
 
-    output /= log(maxi + 1.f);
+    output /= std::log(maxi + 1.f);
 
+    output.convertTo(output, CV_32FC3);
     return output;
 }
 
@@ -155,19 +157,19 @@ Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol)
 }
 
 template<typename T>
-Mat resize(const Mat &input, const Seam &seam)
+Mat_<T> resize(const Mat_<T> &input, const Seam &seam)
 {
     // TODO Allow multiple seam deletion
-    Mat output = input.clone();
+    cv::Mat_<T> output = input.clone();
     // Shifts all the pixels on the right of the seam
     for (int row = 0; row < output.rows; ++row)
         for (int col = seam[row]; col < output.cols - 1; ++col)
-            output.at<T>(row, col) = output.at<T>(row, col + 1);
+            output.template at<T>(row, col) = output.template at<T>(row, col + 1);
     // Crop the output image
-    return output(Rect(0, 0, output.cols - 1, output.rows));
+    return output(cv::Rect(0, 0, output.cols - 1, output.rows));
 }
 
-Mat1i generateIndexMatrix(const Mat &input)
+Mat1i generateIndexMatrix(const Mat3f &input)
 {
     Mat1i output(input.rows, input.cols);
     for (int row = 0; row < input.rows; ++row)
@@ -207,7 +209,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         index = generateIndexMatrix(input);
 
     // TODO: Use newWidth instead
-    int dw = 500;
+    int dw = 50;
     int removedSeams = 0;
 
     while (removedSeams < dw)
@@ -270,7 +272,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         removedSeams += (int) seams.size();
 
         cout << removedSeams << "/" << dw << " (-" << seams.size() << ")\r";
-        cout << flush;
+        cout << endl;
     }
 
     return exportSeams ? getImageWithSeams(input, index) : output;
@@ -278,7 +280,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
 
 int main(int argc, char *argv[])
 {
-    ArgumentParser program("seam_carve");
+    argparse::ArgumentParser program("seam_carve");
 
     program.add_argument("image")
             .help("input image path");
@@ -304,10 +306,10 @@ int main(int argc, char *argv[])
         auto const &inputPath = program.get<string>("image");
         auto const &outputPath = program.get<string>("-o");
 
-        Mat input = imread(inputPath);
+        Mat3f input = cv::imread(inputPath);
         input.convertTo(input, CV_32FC3, 1 / 256.f);
 
-        Mat output;
+        Mat3f output;
         if (program.get<bool>("--energy-paths"))
             output = energyPaths(input);
         else
@@ -315,7 +317,7 @@ int main(int argc, char *argv[])
 
         imwrite(outputPath, output * 256);
     }
-    catch (const runtime_error &err)
+    catch (const std::runtime_error &err)
     {
         cerr << err.what() << std::endl;
         cerr << program;
