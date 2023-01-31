@@ -209,7 +209,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         index = generateIndexMatrix(input);
 
     // TODO: Use newWidth instead
-    int dw = 50;
+    int dw = 500;
     int removedSeams = 0;
 
     while (removedSeams < dw)
@@ -245,16 +245,20 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         float minimumEnergy = cumulativeEnergy.at<float>(cumulativeEnergy.rows - 1, sortedEnergiesIndex[0]);
 
         while (
-                cumulativeEnergy.at<float>(cumulativeEnergy.rows - 1, sortedEnergiesIndex[i]) <= 1.01 * minimumEnergy &&
+                i < (int) sortedEnergiesIndex.size() &&
+                cumulativeEnergy.at<float>(cumulativeEnergy.rows - 1, sortedEnergiesIndex[i]) <= 2 * minimumEnergy &&
                 (int) seams.size() < output.cols / 10 &&
                 removedSeams + (int) seams.size() < dw
-        ) {
+                )
+        {
             // If seam does not intersect any other seam
-            int seamLastCol = startColumns[sortedEnergiesIndex[i]];
+            // FIXME: Store seam last column instead of computing backtrack each time
+            const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
+            int seamLastCol = seam[seam.size() - 1];
             if (lastCols.find(seamLastCol) == lastCols.end())
             {
                 // Add seam to seams
-                const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
+                //const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
                 seams.insert(seam);
                 // Add seam last column to last positions
                 lastCols.insert(seamLastCol);
