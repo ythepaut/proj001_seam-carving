@@ -1,4 +1,5 @@
 #include <iostream>
+#include <set>
 
 #include "main.hpp"
 
@@ -41,18 +42,18 @@ float euclideanNorm(float a, float b, float c)
     return sqrt(a * a + b * b + c * c);
 }
 
-/**
- * Returns the image's energy matrix (gradient)
- */
-Mat energyMatrix(const Mat &input, const function<float(float, float, float)> &norm)
+Mat energyMatrix(const Mat &input, float (*norm)(float, float, float) = euclideanNorm)
 {
+    // Splits the channels for the gradient computation
     vector<Mat> channels;
     split(input, channels);
 
+    // Computes and stores the gradient for each channel
     vector<Mat> gradients;
     for (const Mat &channel: channels)
         gradients.push_back(channelGradient(channel));
 
+    // Computes the energy matrix from the norm
     Mat energy(input.rows, input.cols, CV_32FC1);
     for (int row = 0; row < input.rows; ++row)
         for (int col = 0; col < input.cols; ++col)
@@ -65,19 +66,16 @@ Mat energyMatrix(const Mat &input, const function<float(float, float, float)> &n
     return energy;
 }
 
-/**
- * Returns the matrix showing energy paths from all starting points
- */
-Mat energyPaths(const Mat &input)
+Mat energyPaths(const Mat3f &input)
 {
     Mat output(input.rows, input.cols, CV_32FC1);
-    Mat energy = energyMatrix(input, euclideanNorm);
-    Mat minCumulativeEnergy = cumulativeEnergy(energy);
+    Mat energy = energyMatrix(input);
+    auto [cumulativeEnergy, startColumns] = getCumulativeEnergy(energy);
     for (int startCol = 0; startCol < output.cols; ++startCol)
     {
-        Seam seam = backtrack(minCumulativeEnergy, startCol);
+        Seam seam = backtrack(cumulativeEnergy, startCol);
         for (int row = 0; row < output.rows; ++row)
-            ++output.at<float>(row, seam.cols[row]);
+            ++output.at<float>(row, seam[row]);
     }
 
     float maxi = 0;
@@ -96,34 +94,45 @@ Mat energyPaths(const Mat &input)
     return output;
 }
 
-Mat cumulativeEnergy(const Mat &energy)
+tuple<Mat1f, vector<int>> getCumulativeEnergy(const Mat1f &energy)
 {
-    Mat minCumulativeEnergy(energy.rows, energy.cols, CV_32FC1);
+    Mat1f minCumulativeEnergy(energy.rows, energy.cols);
+    vector<int> start(energy.cols);
 
     for (int col = 0; col < minCumulativeEnergy.cols; ++col)
+    {
         minCumulativeEnergy.at<float>(0, col) = energy.at<float>(0, col);
+        start.at(col) = col;
+    }
 
     for (int row = 1; row < minCumulativeEnergy.rows; ++row)
     {
         for (int col = 0; col < minCumulativeEnergy.cols; ++col)
         {
-            float minEnergy = INFINITY;
-            for (int offset = -1; offset <= 1; ++offset)
+            float minEnergy = minCumulativeEnergy.at<float>(row - 1, col);
+            int minOffset = 0;
+            for (int offset = -1; offset <= 1; offset += 2)
             {
                 if (col + offset < 0 || col + offset >= minCumulativeEnergy.cols)
                     continue;
 
-                minEnergy = MIN(minEnergy, minCumulativeEnergy.at<float>(row - 1, col + offset));
+                float offsetEnergy = minCumulativeEnergy.at<float>(row - 1, col + offset);
+                if (offsetEnergy < minEnergy)
+                {
+                    minEnergy = offsetEnergy;
+                    minOffset = offset;
+                }
             }
 
             minCumulativeEnergy.at<float>(row, col) = energy.at<float>(row, col) + minEnergy;
+            start.at(col) = col + minOffset;
         }
     }
 
-    return minCumulativeEnergy;
+    return make_tuple(minCumulativeEnergy, start);
 }
 
-Seam backtrack(const Mat &minCumulativeEnergy, int startCol)
+Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol)
 {
     vector<int> seamCols;
 
@@ -132,7 +141,7 @@ Seam backtrack(const Mat &minCumulativeEnergy, int startCol)
     {
         seamCols.push_back(currentCol);
         int minCol = currentCol;
-        for (int offset = -1; offset <= 1; ++offset)
+        for (int offset = -1; offset <= 1; offset += 2)
         {
             if (currentCol + offset < 0 || currentCol + offset >= minCumulativeEnergy.cols)
                 continue;
@@ -142,52 +151,20 @@ Seam backtrack(const Mat &minCumulativeEnergy, int startCol)
         currentCol = minCol;
     }
     seamCols.push_back(currentCol);
-    return {
-            seamCols,
-            *min_element(seamCols.begin(), seamCols.end()),
-            *max_element(seamCols.begin(), seamCols.end())
-    };
+    return seamCols;
 }
 
-Seam backtrackWithStarts(const Mat &minCumulativeEnergy, const vector<int> &seamStarts)
-{
-    int startCol = 0;
-    for (int col = 1; col < minCumulativeEnergy.cols; ++col)
-        if (minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, col) <
-            minCumulativeEnergy.at<float>(minCumulativeEnergy.rows - 1, startCol))
-            if (none_of(seamStarts.begin(), seamStarts.end(), [col](const int &col_)
-            { return col == col_; }))
-                startCol = col;
-
-    return backtrack(minCumulativeEnergy, startCol);
-}
-
-/**
- * Removes a seam from the image by shifting the pixels to the left
- */
 template<typename T>
 Mat resize(const Mat &input, const Seam &seam)
 {
+    // TODO Allow multiple seam deletion
     Mat output = input.clone();
+    // Shifts all the pixels on the right of the seam
     for (int row = 0; row < output.rows; ++row)
-        for (int col = seam.cols[row]; col < output.cols - 1; ++col)
+        for (int col = seam[row]; col < output.cols - 1; ++col)
             output.at<T>(row, col) = output.at<T>(row, col + 1);
+    // Crop the output image
     return output(Rect(0, 0, output.cols - 1, output.rows));
-}
-
-/**
- * Returns true if the seam can potentially intersect one of the other seams.
- */
-bool seamIntersectAnySeams(const Seam &seam, const vector<Seam> &others)
-{
-    return any_of(
-            others.begin(),
-            others.end(),
-            [&seam](const Seam &other)
-            {
-                return seam.cols[seam.cols.size() - 1] == other.cols[seam.cols.size() - 1];
-            }
-    );
 }
 
 Mat1i generateIndexMatrix(const Mat &input)
@@ -201,11 +178,13 @@ Mat1i generateIndexMatrix(const Mat &input)
 
 Mat3f getImageWithSeams(const Mat3f &input, const Mat1i &index)
 {
+    // Fills the image with red pixels
     Mat3f output(input.rows, input.cols);
     for (int row = 0; row < output.rows; ++row)
         for (int col = 0; col < output.cols; ++col)
             output.at<Vec3f>(row, col) = Vec3f(0., 0., 1.);
 
+    // Adds the input image's pixels at their original position
     for (int row = 0; row < output.rows; ++row)
     {
         for (int col = 0; col < index.cols; ++col)
@@ -221,47 +200,77 @@ Mat3f getImageWithSeams(const Mat3f &input, const Mat1i &index)
 Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeams)
 {
     Mat3f output = input.clone();
+
+    // Index matrix for seams visualisation
     Mat1i index;
     if (exportSeams)
         index = generateIndexMatrix(input);
 
-    int concurrentSeams = 10;
-    int dw = 500; // TODO use newWidth instead
+    // TODO: Use newWidth instead
+    int dw = 500;
+    int removedSeams = 0;
 
-    Mat minCumulativeEnergy;
-    vector<Seam> seams;
-    vector<int> seamStarts;
-
-    for (int i = 0; i < dw + 1; ++i)
+    while (removedSeams < dw)
     {
-        cout << i << "/" << dw << "\t\r";
-        cout << flush;
+        // Get all candidate seams
+        auto [cumulativeEnergy, startColumns] = getCumulativeEnergy(energyMatrix(output));
 
-        // Recalculate energy matrices and resize
-        if (i % concurrentSeams == 0 || (int) seamStarts.size() >= output.cols / 5)
-        {
-            cerr << seams.size() << endl;
-            for (const Seam &seam: seams)
+        // Stores the index of the columns with the least energy on the last row
+        vector<int> sortedEnergiesIndex(cumulativeEnergy.cols);
+        for (int i = 0; i < cumulativeEnergy.cols; ++i)
+            sortedEnergiesIndex.push_back(i);
+
+        // Sort energies
+        sort(
+                sortedEnergiesIndex.begin(),
+                sortedEnergiesIndex.end(),
+                [cumulativeEnergy](int i, int j)
+                {
+                    const int lastRow = cumulativeEnergy.rows - 1;
+                    const float energyI = cumulativeEnergy.at<float>(lastRow, i);
+                    const float energyJ = cumulativeEnergy.at<float>(lastRow, j);
+                    return energyI < energyJ;
+                }
+        );
+
+        // Last positions (stores the last position for each seam to check collisions)
+        set<int> lastCols;
+
+        // Finds the best seams that do not intersect
+        set<Seam> seams;
+        int i = 0;
+
+        float minimumEnergy = cumulativeEnergy.at<float>(cumulativeEnergy.rows - 1, sortedEnergiesIndex[0]);
+
+        while (
+                cumulativeEnergy.at<float>(cumulativeEnergy.rows - 1, sortedEnergiesIndex[i]) <= 1.01 * minimumEnergy &&
+                (int) seams.size() < output.cols / 10 &&
+                removedSeams + (int) seams.size() < dw
+        ) {
+            // If seam does not intersect any other seam
+            int seamLastCol = startColumns[sortedEnergiesIndex[i]];
+            if (lastCols.find(seamLastCol) == lastCols.end())
             {
-                output = resize<Vec3f>(output, seam);
-                if (exportSeams)
-                    index = resize<int>(index, seam);
+                // Add seam to seams
+                const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
+                seams.insert(seam);
+                // Add seam last column to last positions
+                lastCols.insert(seamLastCol);
             }
-            seamStarts.clear();
-            seams.clear();
-
-            minCumulativeEnergy = cumulativeEnergy(energyMatrix(output, euclideanNorm));
+            ++i;
         }
 
-        // Finding next best seam
-        Seam seam;
-        do
+        // Remove seams from the image
+        for (const Seam &seam: seams)
         {
-            seam = backtrackWithStarts(minCumulativeEnergy, seamStarts);
-            seamStarts.push_back(seam.cols[0]);
-        } while (seamIntersectAnySeams(seam, seams) && (int) seamStarts.size() < output.cols / 5);
+            output = resize<Vec3f>(output, seam);
+            if (exportSeams)
+                index = resize<int>(index, seam);
+        }
+        removedSeams += (int) seams.size();
 
-        seams.push_back(seam);
+        cout << removedSeams << "/" << dw << " (-" << seams.size() << ")\r";
+        cout << flush;
     }
 
     return exportSeams ? getImageWithSeams(input, index) : output;
