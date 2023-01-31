@@ -88,7 +88,7 @@ Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol);
  * @returns Image with seam removed
  */
 template<typename T>
-Mat_<T> resize(const Mat_<T> &input, const Seam &seam);
+Mat_<T> resize(const Mat_<T> &input, const set<Seam> &seams);
 
 /**
  * Creates a matrix of size input.rows x input.cols

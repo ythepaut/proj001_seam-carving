@@ -157,16 +157,28 @@ Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol)
 }
 
 template<typename T>
-Mat_<T> resize(const Mat_<T> &input, const Seam &seam)
+Mat_<T> resize(const Mat_<T> &input, const set<Seam> &seams)
 {
-    // TODO Allow multiple seam deletion
-    cv::Mat_<T> output = input.clone();
+    Mat_<T> output(input.rows, input.cols);
     // Shifts all the pixels on the right of the seam
-    for (int row = 0; row < output.rows; ++row)
-        for (int col = seam[row]; col < output.cols - 1; ++col)
-            output.template at<T>(row, col) = output.template at<T>(row, col + 1);
+    for (int row = 0; row < input.rows; ++row)
+    {
+        int newColumn = 0;
+        for (int col = 0; col < input.cols; ++col)
+        {
+            if (none_of(seams.begin(), seams.end(), [row, col](const Seam &seam)
+                        {
+                            return seam[row] == col;
+                        }
+            ))
+            {
+                output.template at<T>(row, newColumn) = input.template at<T>(row, col);
+                ++newColumn;
+            }
+        }
+    }
     // Crop the output image
-    return output(cv::Rect(0, 0, output.cols - 1, output.rows));
+    return output(cv::Rect(0, 0, (int) (output.cols - seams.size()), output.rows));
 }
 
 Mat1i generateIndexMatrix(const Mat3f &input)
@@ -267,12 +279,9 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         }
 
         // Remove seams from the image
-        for (const Seam &seam: seams)
-        {
-            output = resize<Vec3f>(output, seam);
-            if (exportSeams)
-                index = resize<int>(index, seam);
-        }
+        output = resize<Vec3f>(output, seams);
+        if (exportSeams)
+            index = resize<int>(index, seams);
         removedSeams += (int) seams.size();
 
         cout << removedSeams << "/" << dw << " (-" << seams.size() << ")\r";
