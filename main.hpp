@@ -46,13 +46,22 @@ Mat1f differentialFilterY(const Mat1f &input, float delta);
 Mat1f channelGradient(const Mat1f &input);
 
 /**
- * Euclidean distance between three values
- * @param a First value
- * @param b Second value
- * @param c Third value
+ * Calculates the gradient's norm (vector's norm)
+ * @param a First component
+ * @param b Second component
+ * @param c Third component
  * @returns Euclidean distance
  */
 float euclideanNorm(float a, float b, float c);
+
+/**
+ * Calculates the gradient's "norm" (sum of components)
+ * @param a First component
+ * @param b Second component
+ * @param c Third component
+ * @return Sum of all components
+ */
+float sumNorm(float a, float b, float c);
 
 /**
  * @param input Image to be processed

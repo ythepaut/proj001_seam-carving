@@ -42,7 +42,12 @@ float euclideanNorm(float a, float b, float c)
     return std::sqrt(a * a + b * b + c * c);
 }
 
-Mat1f energyMatrix(const Mat3f &input, float (*norm)(float, float, float) = euclideanNorm)
+float sumNorm(float a, float b, float c)
+{
+    return a + b + c;
+}
+
+Mat1f energyMatrix(const Mat3f &input, float (*norm)(float, float, float) = sumNorm)
 {
     // Splits the channels for the gradient computation
     vector<Mat1f> channels(3);
@@ -113,7 +118,7 @@ tuple<Mat1f, vector<int>> getCumulativeEnergy(const Mat1f &energy)
         {
             float minEnergy = minCumulativeEnergy.at<float>(row - 1, col);
             int minOffset = 0;
-            for (int offset = -1; offset <= 1; offset += 2)
+            for (int offset = 1; offset >= 1; offset -= 2)
             {
                 if (col + offset < 0 || col + offset >= minCumulativeEnergy.cols)
                     continue;
@@ -127,7 +132,7 @@ tuple<Mat1f, vector<int>> getCumulativeEnergy(const Mat1f &energy)
             }
 
             minCumulativeEnergy.at<float>(row, col) = energy.at<float>(row, col) + minEnergy;
-            start.at(col) = col + minOffset;
+            start.at(col + minOffset) = start.at(col);
         }
     }
 
@@ -136,12 +141,12 @@ tuple<Mat1f, vector<int>> getCumulativeEnergy(const Mat1f &energy)
 
 Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol)
 {
-    vector<int> seamCols;
+    vector<int> seamCols(minCumulativeEnergy.rows);
 
     int currentCol = startCol;
     for (int row = minCumulativeEnergy.rows - 1; row > 0; --row)
     {
-        seamCols.push_back(currentCol);
+        seamCols.insert(seamCols.begin(), currentCol);
         int minCol = currentCol;
         for (int offset = -1; offset <= 1; offset += 2)
         {
@@ -152,7 +157,7 @@ Seam backtrack(const Mat1f &minCumulativeEnergy, int startCol)
         }
         currentCol = minCol;
     }
-    seamCols.push_back(currentCol);
+    seamCols.insert(seamCols.begin(), currentCol);
     return seamCols;
 }
 
@@ -265,12 +270,13 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         {
             // If seam does not intersect any other seam
             // FIXME: Store seam last column instead of computing backtrack each time
-            const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
-            int seamLastCol = seam[seam.size() - 1];
+            //const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
+            int seamLastCol = startColumns[sortedEnergiesIndex[i]];
+            // int seamLastCol = seam[0];
             if (lastCols.find(seamLastCol) == lastCols.end())
             {
                 // Add seam to seams
-                //const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
+                const Seam seam = backtrack(cumulativeEnergy, sortedEnergiesIndex[i]);
                 seams.insert(seam);
                 // Add seam last column to last positions
                 lastCols.insert(seamLastCol);
@@ -285,7 +291,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
         removedSeams += (int) seams.size();
 
         cout << removedSeams << "/" << dw << " (-" << seams.size() << ")\r";
-        cout << endl;
+        cout << std::flush;
     }
 
     return exportSeams ? getImageWithSeams(input, index) : output;
