@@ -211,7 +211,7 @@ Mat3f getImageWithSeams(const Mat3f &input, const Mat1i &index)
     return output;
 }
 
-Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeams)
+Mat3f seamCarve(const Mat3f &input, int dw, bool exportSeams)
 {
     Mat3f output = input.clone();
 
@@ -220,10 +220,7 @@ Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeam
     if (exportSeams)
         index = generateIndexMatrix(input);
 
-    // TODO: Use newWidth instead
-    int dw = 500;
     int removedSeams = 0;
-
     while (removedSeams < dw)
     {
         // Get all candidate seams
@@ -300,9 +297,11 @@ int main(int argc, char *argv[])
     program.add_argument("-o", "--output")
             .help("output directory path");
     program.add_argument("-w", "--width")
-            .help("output image width");
+            .help("output image width")
+            .default_value("0");
     program.add_argument("-H", "--height")
-            .help("output image height");
+            .help("output image height")
+            .default_value("0");
     program.add_argument("--energy-paths")
             .help("export energy paths from the input image")
             .default_value(false)
@@ -314,20 +313,50 @@ int main(int argc, char *argv[])
 
     try
     {
+        // Parse arguments
         program.parse_args(argc, argv);
-
         auto const &inputPath = program.get<string>("image");
         auto const &outputPath = program.get<string>("-o");
+        auto const &strNewWidth = program.get<string>("--width");
+        auto const &strNewHeight = program.get<string>("--height");
+        int newWidth = std::stoi(strNewWidth);
+        int newHeight = std::stoi(strNewHeight);
 
+        // Read input image
         Mat3f input = cv::imread(inputPath);
         input.convertTo(input, CV_32FC3, 1 / 256.f);
 
+        // Create output image
         Mat3f output;
         if (program.get<bool>("--energy-paths"))
+        {
             output = energyPaths(input);
+        }
         else
-            output = seamCarve(input, 100, 100, program.get<bool>("--export-seams"));
+        {
+            int width = input.cols;
+            int height = input.rows;
+            newWidth = newWidth ? newWidth : width;
+            newHeight = newHeight ? newHeight : height;
 
+            Mat3f rescaledInput;
+            cv::resize(
+                    input,
+                    rescaledInput,
+                    cv::Size(
+                            MAX(newWidth, (int) (newHeight * ((float) width / (float) height))),
+                            MAX(newHeight, (int) (newWidth * ((float) height / (float) width)))
+                            )
+                    );
+
+            bool horizontalSeamCarving = rescaledInput.cols > newWidth;
+            int delta = horizontalSeamCarving ? rescaledInput.cols - newWidth : rescaledInput.rows - newHeight;
+            output = seamCarve(horizontalSeamCarving ? rescaledInput : rescaledInput.t(), delta, program.get<bool>("--export-seams"));
+            if (!horizontalSeamCarving)
+                output = output.t();
+        }
+
+        // Save output image
         imwrite(outputPath, output * 256);
     }
     catch (const std::runtime_error &err)

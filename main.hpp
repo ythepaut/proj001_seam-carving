@@ -108,11 +108,10 @@ Mat3f getImageWithSeams(const Mat3f &input, const Mat1i &index);
 /**
  * Carve an image
  * @param input Original image
- * @param newWidth New width of the image
- * @param newHeight New height of the image
+ * @param dw Delta width : number of columns (seams) to remove
  * @param exportSeams Whether to export seams or not
  */
-Mat3f seamCarve(const Mat3f &input, int newWidth, int newHeight, bool exportSeams);
+Mat3f seamCarve(const Mat3f &input, int dw, bool exportSeams);
 
 int main(int argc, char *argv[]);
 
