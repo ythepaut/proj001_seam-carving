@@ -65,7 +65,7 @@ Mat1f energyMatrix(const Mat3f &input, float (*norm)(float, float, float));
  * @param input Image to be processed
  * @returns Matrix showing energy paths from all starting points
  */
-Mat3f energyPaths(const Mat3f &input);
+Mat1f energyPaths(const Mat3f &input);
 
 /**
  * @param energy Energy matrix

@@ -67,9 +67,9 @@ Mat1f energyMatrix(const Mat3f &input, float (*norm)(float, float, float) = eucl
     return energy;
 }
 
-Mat3f energyPaths(const Mat3f &input)
+Mat1f energyPaths(const Mat3f &input)
 {
-    Mat1f output(input.rows, input.cols, CV_32FC1);
+    Mat1f output(input.rows, input.cols);
     Mat1f energy = energyMatrix(input);
     auto [cumulativeEnergy, startColumns] = getCumulativeEnergy(energy);
     for (int startCol = 0; startCol < output.cols; ++startCol)
@@ -92,7 +92,6 @@ Mat3f energyPaths(const Mat3f &input)
 
     output /= std::log(maxi + 1.f);
 
-    output.convertTo(output, CV_32FC3);
     return output;
 }
 
@@ -326,11 +325,12 @@ int main(int argc, char *argv[])
         Mat3f input = cv::imread(inputPath);
         input.convertTo(input, CV_32FC3, 1 / 256.f);
 
-        // Create output image
-        Mat3f output;
         if (program.get<bool>("--energy-paths"))
         {
-            output = energyPaths(input);
+            // Create output image
+            Mat1f output = energyPaths(input);
+            // Save output image
+            imwrite(outputPath, output * 256);
         }
         else
         {
@@ -351,13 +351,13 @@ int main(int argc, char *argv[])
 
             bool horizontalSeamCarving = rescaledInput.cols > newWidth;
             int delta = horizontalSeamCarving ? rescaledInput.cols - newWidth : rescaledInput.rows - newHeight;
-            output = seamCarve(horizontalSeamCarving ? rescaledInput : rescaledInput.t(), delta, program.get<bool>("--export-seams"));
+            Mat3f output = seamCarve(horizontalSeamCarving ? rescaledInput : rescaledInput.t(), delta, program.get<bool>("--export-seams"));
             if (!horizontalSeamCarving)
                 output = output.t();
-        }
 
-        // Save output image
-        imwrite(outputPath, output * 256);
+            // Save output image
+            imwrite(outputPath, output * 256);
+        }
     }
     catch (const std::runtime_error &err)
     {
