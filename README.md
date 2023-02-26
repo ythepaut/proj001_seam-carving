@@ -41,7 +41,7 @@ Options disponibles :
 Un exemple d'utilisation pourrait être
 
 ```sh
-./seam_carving ./examples/broadway_original.jpg -w 1000 -h 868 -o example.png
+./seam_carving ./examples/broadway_original.jpg -w 1000 -H 868 -o ./examples/boardway_resized.png
 ```
 
 ## Algorithme
